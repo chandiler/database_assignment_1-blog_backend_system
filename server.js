@@ -3,11 +3,28 @@ const app = express();
 const port = 8080;
 // getting-started.js
 const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
 
 const UserSchema = new mongoose.Schema({
-  username: String,
-  password: String,
-  email: String,
+  username: {
+    type: String,
+    required: true,              // 必填
+    unique: true,                // 不允许重复
+    minlength: 3,                // 最少 3 个字符
+    maxlength: 30,               // 最多 30 个字符
+    trim: true                   // 自动去掉首尾空格
+  },
+  password: {
+    type: String,
+    required: true,
+    minlength: 6                 // 至少 6 位
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    match: [/^\S+@\S+\.\S+$/, 'invalid email format'] // 简单邮箱正则
+  },
   registration_date: {
     type: Date,
     default: Date.now
@@ -17,7 +34,10 @@ const UserSchema = new mongoose.Schema({
 const BlogPostSchema = new mongoose.Schema({
   title: String,
   content: String,
-  author: String,
+  author: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'user'
+  },
   creation_date: {
     type: Date,
     default: Date.now
@@ -26,9 +46,15 @@ const BlogPostSchema = new mongoose.Schema({
 })
 
 const CommentSchema = new mongoose.Schema({
-  reference_to_User: String,
+  reference_to_User: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'user'
+  },
   text: String,
-  reference_to_BlogPost: String,
+  reference_to_BlogPost: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'blog'
+  },
   creation_date: {
     type: Date,
     default: Date.now
@@ -58,7 +84,11 @@ app.get('/', (req, res) => {
 app.post('/regist', async (req, res) => {
   try {
     // console.log(req.body)
-    const newUser = new User(req.body);
+    const hashedPassword = await bcrypt.hash(req.body.password, 10);
+    const newUser = new User({
+      ...req.body,
+      password: hashedPassword
+    })
     const saveData = await newUser.save();
     res.status(201).json({ message: 'user created', user: saveData })
   }
@@ -76,7 +106,8 @@ app.post('/login', async (req, res) => {
     if (!user) {
       return res.status(401).json({ message: "user dose not exist" })
     }
-    if (user.password !== req.body.password) {
+    const match = await bcrypt.compare(req.body.password, user.password);
+    if (!match) {
       return res.status(401).json({ message: "wrong password" })
     }
     return res.status(200).json({ message: "login successfuc" })
@@ -92,7 +123,7 @@ app.post('/login', async (req, res) => {
 //Authenticate
 app.use(async (req, res, next) => {
   try {
-    if (req.path == '/regist' || req.path == 'login') {
+    if (req.path == '/regist' || req.path == '/login') {
       return next()
     }
     //await Authenticate(req, res, next);
@@ -107,7 +138,8 @@ app.use(async (req, res, next) => {
     if (!user) {
       return res.status(401).json({ message: "user dose not exist" })
     }
-    if (user.password !== password) {
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
       return res.status(401).json({ message: "wrong password" })
     }
     req.user = user;
@@ -127,8 +159,6 @@ app.use(async (req, res, next) => {
 // app.put('/postBlogs/:id', ...)    // 更新某个
 // app.delete('/postBlogs/:id', ...) // 删除某个
 
-//创造文章
-//creat
 app.post('/postBlogs', async (req, res) => {
   try {
     const PostBlog = new Blog(req.body);
@@ -209,6 +239,47 @@ app.delete('/postBlogs/:id', async (req, res) => {
     res.status(500).json({ err: 'Fail to delete blog' })
   }
 })
+
+// app.post('/blogposts/:id/comments', ...)       // 新建
+// app.get('/blogposts/:id/comments', ...)        // 查询所有 
+// app.delete('/comments/:id', ...) // 删除某个
+app.post('/blogposts/:id/comments', async (req, res) => {
+  try {
+    const blog = await Blog.findById(req.params.id);
+    if (!blog) {
+      return res.status(500).json({ message: 'blog not found' })
+    }
+    const NewComment = new Comment(req.body);
+    const saveData = await NewComment.save();
+    res.status(200).json({ message: 'comment posted', comment: saveData })
+  }
+  catch (err) {
+    console.log(err)
+    res.status(500).json({ err: 'fail to post comment' })
+  }
+})
+
+app.get('/blogposts/:postid/comments', async (req, res) => {
+  try {
+    const allComments = await Comment.find({ reference_to_BlogPost: req.params.postid })
+    res.status(200).json({ comment: allComments })
+  } catch (err) {
+    console.log(err)
+    res.status(500).json({ err: "fail to find comment" })
+  }
+})
+
+app.delete('/comments/:id', async (req, res) => {
+  try {
+    //find可以传对象但是byid就只接受字符串
+    await Comment.findByIdAndDelete(req.params.id)
+    res.status(200).json({ message: 'comment deleted successfully' })
+  } catch (err) {
+    console.log(err)
+    res.status(500).json({ err: 'fail to delete comment' })
+  }
+})
+
 main().catch(err => console.log(err));
 
 async function main() {
@@ -220,4 +291,7 @@ async function main() {
   });
 
 }
+
+module.exports = { User, Blog, Comment };
+
 
